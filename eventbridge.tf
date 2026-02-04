@@ -55,17 +55,42 @@ def lambda_handler(event, context):
         logger.info(f"Processing newly created user profile: {user_profile_name}")
         
         try:
-            # Create user directory with permissions
-            repository = f'/mnt/efs/{user_profile_name}'
-            logger.info(f"Creating directory: {repository}")
+            # Create EFS Access Point for user-specific directory (instead of subprocess)
+            user_directory_path = f"/{user_profile_name}"
+            access_point_name = f"{user_profile_name}-access-point"
             
-            # Create directory (with -p flag for mkdir)
-            mkdir_result = subprocess.call(['mkdir', '-p', repository])
-            logger.info(f"mkdir result for {user_profile_name}: {mkdir_result}")
+            logger.info(f"Creating EFS access point for directory: {user_directory_path}")
             
-            # Set ownership to SageMaker default UID/GID
-            chown_result = subprocess.call(['chown', '200001:1001', repository])
-            logger.info(f"chown result for {user_profile_name}: {chown_result}")
+            # Use EFS API to create directory with proper permissions
+            efs_client = boto3.client('efs')
+            access_point_response = efs_client.create_access_point(
+                FileSystemId=file_system,
+                PosixUser={
+                    'Uid': 200001,  # SageMaker default UID
+                    'Gid': 1001     # SageMaker default GID
+                },
+                RootDirectory={
+                    'Path': user_directory_path,
+                    'CreationInfo': {
+                        'OwnerUid': 200001,
+                        'OwnerGid': 1001,
+                        'Permissions': '0755'  # User directory permissions
+                    }
+                },
+                Tags=[
+                    {
+                        'Key': 'Name',
+                        'Value': access_point_name
+                    },
+                    {
+                        'Key': 'UserProfile', 
+                        'Value': user_profile_name
+                    }
+                ]
+            )
+            
+            access_point_id = access_point_response['AccessPointId']
+            logger.info(f"Created EFS Access Point: {access_point_id}")
             
             # Update SageMaker user profile
             response = sm_client.update_user_profile(
@@ -76,7 +101,7 @@ def lambda_handler(event, context):
                         {
                             'EFSFileSystemConfig': {
                                 'FileSystemId': file_system,
-                                'FileSystemPath': f'/{user_profile_name}'
+                                'FileSystemPath': user_directory_path
                             }
                         }
                     ]
