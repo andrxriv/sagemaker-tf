@@ -1,4 +1,10 @@
 # Environment and Account Configuration
+variable "name" {
+  description = "Base name for the infrastructure deployment"
+  type        = string
+  default     = "terraform-infra-deployment"
+}
+
 variable "env" {
   description = "Environment name"
   type        = string

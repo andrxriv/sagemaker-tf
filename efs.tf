@@ -125,7 +125,7 @@ resource "aws_efs_access_point" "shared_repo_ap" {
   file_system_id = aws_efs_file_system.shared_efs.id
 
   root_directory {
-    path = "/shared_repo"
+    path = "/"
     creation_info {
       owner_uid   = 200001
       owner_gid   = 1001

@@ -410,7 +410,7 @@ resource "aws_security_group" "sagemaker_jupyterlab_sg" {
 
 
 resource "aws_sagemaker_domain" "jupyterlab_domain" {
-  domain_name = "infra-test-jupyterlab-sagemaker-${var.env}"
+  domain_name = "${var.name}-${var.env}"
 
   auth_mode                       = "SSO"  # AWS Identity Center
   app_network_access_type        = "VpcOnly"
@@ -434,7 +434,7 @@ resource "aws_sagemaker_domain" "jupyterlab_domain" {
     custom_file_system_config {
         efs_file_system_config {
           file_system_id   = aws_efs_file_system.shared_efs.id
-          file_system_path = "/shared_repo"
+          file_system_path = "/"
         }
       }
     
@@ -499,7 +499,7 @@ resource "aws_sagemaker_domain" "jupyterlab_domain" {
     custom_file_system_config {
       efs_file_system_config {
         file_system_id   = aws_efs_file_system.shared_efs.id
-        file_system_path = "/shared_repo"
+        file_system_path = "/"
       }
     }
 

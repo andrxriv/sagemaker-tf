@@ -137,6 +137,7 @@ terraform destroy -var-file="prod.tfvars"
 - Production variables should be managed securely and not committed to version control
 - The infrastructure supports both development and production deployments
 - All resources are tagged consistently for cost allocation and management
+- In order to effectively use the custom EFS file system, a bastion instance will be required to set ownership of the EFS to 2000001:1001
 
 ## Support
 
