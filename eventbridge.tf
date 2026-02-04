@@ -9,14 +9,14 @@ resource "aws_lambda_function" "create_user_profile_handler" {
   filename         = "create_user_profile_handler.zip"
   function_name    = "sagemaker-create-user-profile-handler-${var.env}"
   role            = aws_iam_role.lambda_execution_role.arn
-  handler         = "index.handler"
+  handler         = "index.lambda_handler"
   runtime         = "python3.11"
-  timeout         = 30
+  timeout         = 60
 
   environment {
     variables = {
-      ENVIRONMENT = var.env
-      REGION      = var.region
+      efs_id    = aws_efs_file_system.shared_efs.id
+      domain_id = aws_sagemaker_domain.jupyterlab_domain.id
     }
   }
 
@@ -39,65 +39,96 @@ data "archive_file" "lambda_zip" {
   source {
     content = <<EOF
 import json
+import subprocess
 import boto3
-import logging
 import os
+import logging
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-def handler(event, context):
+sm_client = boto3.client('sagemaker')
+
+def lambda_handler(event, context):
     """
     Handle SageMaker CreateUserProfile events from EventBridge
+    Creates private EFS directories and updates user profile configurations
     """
     logger.info(f"Received CreateUserProfile event: {json.dumps(event, indent=2)}")
     
     try:
-        # Extract event details
-        detail = event.get('detail', {})
-        source = event.get('source', '')
+        # Get EFS and Domain ID from environment
+        file_system = os.environ['efs_id']
+        domain_id = os.environ['domain_id']    
         
-        if source == 'aws.sagemaker':
-            event_name = detail.get('eventName', '')
+        logger.info(f"Processing domain: {domain_id}")
+        logger.info(f"Using EFS: {file_system}")
+        
+        # Get Domain user profiles
+        list_user_profiles_response = sm_client.list_user_profiles(
+            DomainIdEquals=domain_id
+        )
+        domain_users = list_user_profiles_response["UserProfiles"]
+        
+        logger.info(f"Found {len(domain_users)} user profiles in domain")
+        
+        # Create directories for each user
+        for user in domain_users:
+            user_profile_name = user["UserProfileName"]
+            logger.info(f"Processing user profile: {user_profile_name}")
             
-            if event_name == 'CreateUserProfile':
-                # Extract user profile information
-                user_profile_name = detail.get('responseElements', {}).get('userProfileName', '')
-                domain_id = detail.get('responseElements', {}).get('domainId', '')
+            try:
+                # Create user directory with permissions
+                repository = f'/mnt/efs/{user_profile_name}'
+                logger.info(f"Creating directory: {repository}")
                 
-                logger.info(f"CreateUserProfile detected:")
-                logger.info(f"  User Profile: {user_profile_name}")
-                logger.info(f"  Domain ID: {domain_id}")
-                logger.info(f"  Environment: {os.environ.get('ENVIRONMENT', 'unknown')}")
+                # Create directory
+                subprocess.call(['mkdir', '-p', repository])
                 
-                # Add your custom logic here
-                # Examples:
-                # - Send notification to Slack/Teams
-                # - Update database records
-                # - Initialize user resources
-                # - Set up user-specific configurations
+                # Set ownership to SageMaker default UID/GID
+                subprocess.call(['chown', '200001:1001', repository])
                 
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        'message': f'Successfully processed CreateUserProfile for {user_profile_name}',
-                        'userProfile': user_profile_name,
-                        'domainId': domain_id
-                    })
-                }
-            
+                logger.info(f"Successfully created directory for {user_profile_name}")
+                
+                # Update SageMaker user profile with custom file system
+                response = sm_client.update_user_profile(
+                    DomainId=domain_id,
+                    UserProfileName=user_profile_name,
+                    UserSettings={
+                        'CustomFileSystemConfigs': [
+                            {
+                                'EFSFileSystemConfig': {
+                                    'FileSystemId': file_system,
+                                    'FileSystemPath': f'/{user_profile_name}'
+                                }
+                            }
+                        ]
+                    }
+                )
+                
+                logger.info(f"Successfully updated user profile: {user_profile_name}")
+                
+            except Exception as user_error:
+                logger.error(f"Error processing user {user_profile_name}: {str(user_error)}")
+                continue  # Continue with next user if one fails
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': f'Successfully processed {len(domain_users)} user profiles',
+                'domain_id': domain_id,
+                'file_system': file_system,
+                'users_processed': [user["UserProfileName"] for user in domain_users]
+            })
+        }
+        
     except Exception as e:
-        logger.error(f"Error processing event: {str(e)}")
+        logger.error(f"Error in lambda_handler: {str(e)}")
         return {
             'statusCode': 500,
             'body': json.dumps({'error': str(e)})
         }
-    
-    return {
-        'statusCode': 200,
-        'body': json.dumps({'message': 'Event processed but no action taken'})
-    }
 EOF
     filename = "index.py"
   }
@@ -152,7 +183,19 @@ resource "aws_iam_policy" "lambda_policy" {
         Effect = "Allow"
         Action = [
           "sagemaker:DescribeUserProfile",
-          "sagemaker:DescribeDomain"
+          "sagemaker:UpdateUserProfile",
+          "sagemaker:DescribeDomain",
+          "sagemaker:ListUserProfiles"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "elasticfilesystem:CreateAccessPoint",
+          "elasticfilesystem:DescribeAccessPoints",
+          "elasticfilesystem:DescribeFileSystems",
+          "elasticfilesystem:TagResource"
         ]
         Resource = "*"
       }
