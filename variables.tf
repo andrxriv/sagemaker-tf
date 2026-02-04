@@ -5,6 +5,18 @@ variable "env" {
   default     = "dev"
 }
 
+variable "region" {
+  description = "AWS Region for resource deployment"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "availability_zones" {
+  description = "Availability zones for multi-AZ deployment"
+  type        = list(string)
+  default     = ["us-east-1a", "us-east-1b"]
+}
+
 variable "account_id" {
   description = "AWS Account ID"
   type        = string

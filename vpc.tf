@@ -30,7 +30,7 @@ resource "aws_internet_gateway" "main" {
 resource "aws_subnet" "public_subnet_1" {
   vpc_id                  = aws_vpc.application_vpc.id
   cidr_block              = "10.0.1.0/24"
-  availability_zone       = "us-east-1a"
+  availability_zone       = var.availability_zones[0]
   map_public_ip_on_launch = true
 
   tags = merge(
@@ -45,7 +45,7 @@ resource "aws_subnet" "public_subnet_1" {
 resource "aws_subnet" "public_subnet_2" {
   vpc_id                  = aws_vpc.application_vpc.id
   cidr_block              = "10.0.2.0/24"
-  availability_zone       = "us-east-1b"
+  availability_zone       = var.availability_zones[1]
   map_public_ip_on_launch = true
 
   tags = merge(
@@ -61,7 +61,7 @@ resource "aws_subnet" "public_subnet_2" {
 resource "aws_subnet" "private_subnet_1" {
   vpc_id            = aws_vpc.application_vpc.id
   cidr_block        = "10.0.10.0/24"
-  availability_zone = "us-east-1a"
+  availability_zone = var.availability_zones[0]
 
   tags = merge(
     var.overall_tags,
@@ -75,7 +75,7 @@ resource "aws_subnet" "private_subnet_1" {
 resource "aws_subnet" "private_subnet_2" {
   vpc_id            = aws_vpc.application_vpc.id
   cidr_block        = "10.0.11.0/24"
-  availability_zone = "us-east-1b"
+  availability_zone = var.availability_zones[1]
 
   tags = merge(
     var.overall_tags,
@@ -86,7 +86,7 @@ resource "aws_subnet" "private_subnet_2" {
   )
 }
 
-# Elastic IPs for NAT Gateways
+# Elastic IP for NAT Gateway
 resource "aws_eip" "nat_1" {
   domain = "vpc"
 
@@ -94,28 +94,14 @@ resource "aws_eip" "nat_1" {
     var.overall_tags,
     var.environment_tags,
     {
-      Name = "application-nat-eip-1"
+      Name = "application-nat-eip"
     }
   )
 
   depends_on = [aws_internet_gateway.main]
 }
 
-resource "aws_eip" "nat_2" {
-  domain = "vpc"
-
-  tags = merge(
-    var.overall_tags,
-    var.environment_tags,
-    {
-      Name = "application-nat-eip-2"
-    }
-  )
-
-  depends_on = [aws_internet_gateway.main]
-}
-
-# NAT Gateways
+# Single NAT Gateway for cost optimization
 resource "aws_nat_gateway" "nat_1" {
   allocation_id = aws_eip.nat_1.id
   subnet_id     = aws_subnet.public_subnet_1.id
@@ -124,22 +110,7 @@ resource "aws_nat_gateway" "nat_1" {
     var.overall_tags,
     var.environment_tags,
     {
-      Name = "application-nat-gateway-1"
-    }
-  )
-
-  depends_on = [aws_internet_gateway.main]
-}
-
-resource "aws_nat_gateway" "nat_2" {
-  allocation_id = aws_eip.nat_2.id
-  subnet_id     = aws_subnet.public_subnet_2.id
-
-  tags = merge(
-    var.overall_tags,
-    var.environment_tags,
-    {
-      Name = "application-nat-gateway-2"
+      Name = "application-nat-gateway"
     }
   )
 
@@ -187,7 +158,7 @@ resource "aws_route_table" "private_2" {
 
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.nat_2.id
+    nat_gateway_id = aws_nat_gateway.nat_1.id
   }
 
   tags = merge(
@@ -220,22 +191,7 @@ resource "aws_route_table_association" "private_2" {
   route_table_id = aws_route_table.private_2.id
 }
 
-# VPC Endpoints for SageMaker
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = aws_vpc.application_vpc.id
-  service_name      = "com.amazonaws.us-east-1.s3"
-  vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.private_1.id, aws_route_table.private_2.id]
-
-  tags = merge(
-    var.overall_tags,
-    var.environment_tags,
-    {
-      Name = "application-s3-endpoint"
-    }
-  )
-}
-
+# Security Group for VPC Endpoints
 resource "aws_security_group" "vpc_endpoints" {
   name        = "vpc-endpoints-sg"
   description = "Security group for VPC endpoints"
@@ -264,9 +220,25 @@ resource "aws_security_group" "vpc_endpoints" {
   )
 }
 
+# VPC Endpoints for SageMaker and related services
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.application_vpc.id
+  service_name      = "com.amazonaws.${var.region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_route_table.private_1.id, aws_route_table.private_2.id]
+
+  tags = merge(
+    var.overall_tags,
+    var.environment_tags,
+    {
+      Name = "application-s3-endpoint"
+    }
+  )
+}
+
 resource "aws_vpc_endpoint" "sagemaker_api" {
   vpc_id              = aws_vpc.application_vpc.id
-  service_name        = "com.amazonaws.us-east-1.sagemaker.api"
+  service_name        = "com.amazonaws.${var.region}.sagemaker.api"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = [aws_subnet.private_subnet_1.id, aws_subnet.private_subnet_2.id]
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -283,7 +255,7 @@ resource "aws_vpc_endpoint" "sagemaker_api" {
 
 resource "aws_vpc_endpoint" "sagemaker_runtime" {
   vpc_id              = aws_vpc.application_vpc.id
-  service_name        = "com.amazonaws.us-east-1.sagemaker.runtime"
+  service_name        = "com.amazonaws.${var.region}.sagemaker.runtime"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = [aws_subnet.private_subnet_1.id, aws_subnet.private_subnet_2.id]
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
@@ -294,6 +266,23 @@ resource "aws_vpc_endpoint" "sagemaker_runtime" {
     var.environment_tags,
     {
       Name = "application-sagemaker-runtime-endpoint"
+    }
+  )
+}
+
+resource "aws_vpc_endpoint" "cloudwatch_logs" {
+  vpc_id              = aws_vpc.application_vpc.id
+  service_name        = "com.amazonaws.${var.region}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.private_subnet_1.id, aws_subnet.private_subnet_2.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = merge(
+    var.overall_tags,
+    var.environment_tags,
+    {
+      Name = "application-cloudwatch-logs-endpoint"
     }
   )
 }
