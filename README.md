@@ -16,8 +16,6 @@ This project creates a complete SageMaker Studio environment with:
 
 ![SageMaker Infrastructure Architecture](./architecture.svg)
 
-📋 **[View Detailed Architecture Diagram](./architecture-diagram.md)**
-
 ### Components
 
 1. **Networking (vpc.tf)**
