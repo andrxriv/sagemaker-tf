@@ -25,8 +25,8 @@ sm_client = boto3.client('sagemaker')
 
 def lambda_handler(event, context):
     """
-    Handle SageMaker CreateUserProfile events from EventBridge
-    Processes all user profiles in the domain to create EFS directories
+    Handle SageMaker CreateUserProfile events from EventBridge  
+    Creates EFS directory for the specific user that was just created
     """
     logger.info(f"Lambda triggered by CreateUserProfile event")
     logger.info(f"Event received: {json.dumps(event, indent=2)}")
@@ -39,70 +39,73 @@ def lambda_handler(event, context):
         logger.info(f"Processing domain: {domain_id}")
         logger.info(f"Using EFS: {file_system}")
         
-        # Get Domain user profiles
-        list_user_profiles_response = sm_client.list_user_profiles(
-            DomainIdEquals=domain_id
-        )
-        domain_users = list_user_profiles_response["UserProfiles"]
+        # Extract user profile name from the event
+        detail = event.get('detail', {})
+        request_parameters = detail.get('requestParameters', {})
+        user_profile_name = request_parameters.get('userProfileName', '')
         
-        logger.info(f"Found {len(domain_users)} user profiles in domain")
-        
-        # Create directories for each user
-        processed_users = []
-        failed_users = []
-        
-        for user in domain_users:
-            user_profile_name = user["UserProfileName"]
-            logger.info(f"Processing user profile: {user_profile_name}")
+        if not user_profile_name:
+            logger.error("Could not extract user profile name from event requestParameters")
+            logger.error(f"Event detail: {json.dumps(detail, indent=2)}")
+            return {
+                'statusCode': 400,
+                'body': json.dumps({'error': 'Missing user profile name in event requestParameters'})
+            }
             
-            try:
-                # Create user directory with permissions
-                repository = f'/mnt/efs/{user_profile_name}'
-                logger.info(f"Creating directory: {repository}")
-                
-                # Create directory (with -p flag for mkdir)
-                mkdir_result = subprocess.call(['mkdir', '-p', repository])
-                logger.info(f"mkdir result for {user_profile_name}: {mkdir_result}")
-                
-                # Set ownership to SageMaker default UID/GID
-                chown_result = subprocess.call(['chown', '200001:1001', repository])
-                logger.info(f"chown result for {user_profile_name}: {chown_result}")
-                
-                # Update SageMaker user profile
-                response = sm_client.update_user_profile(
-                    DomainId=domain_id,
-                    UserProfileName=user_profile_name,
-                    UserSettings={
-                        'CustomFileSystemConfigs': [
-                            {
-                                'EFSFileSystemConfig': {
-                                    'FileSystemId': file_system,
-                                    'FileSystemPath': f'/{user_profile_name}'
-                                }
-                            }
-                        ]
-                    }
-                )
-                
-                logger.info(f"Successfully processed user profile: {user_profile_name}")
-                processed_users.append(user_profile_name)
-                
-            except Exception as user_error:
-                logger.error(f"Error processing user {user_profile_name}: {str(user_error)}")
-                failed_users.append(user_profile_name)
-                continue
+        logger.info(f"Processing newly created user profile: {user_profile_name}")
         
-        return {
-            'statusCode': 200,
-            'body': json.dumps({
-                'message': f'Processed {len(processed_users)} user profiles successfully',
-                'domain_id': domain_id,
-                'file_system': file_system,
-                'processed_users': processed_users,
-                'failed_users': failed_users,
-                'total_users': len(domain_users)
-            })
-        }
+        try:
+            # Create user directory with permissions
+            repository = f'/mnt/efs/{user_profile_name}'
+            logger.info(f"Creating directory: {repository}")
+            
+            # Create directory (with -p flag for mkdir)
+            mkdir_result = subprocess.call(['mkdir', '-p', repository])
+            logger.info(f"mkdir result for {user_profile_name}: {mkdir_result}")
+            
+            # Set ownership to SageMaker default UID/GID
+            chown_result = subprocess.call(['chown', '200001:1001', repository])
+            logger.info(f"chown result for {user_profile_name}: {chown_result}")
+            
+            # Update SageMaker user profile
+            response = sm_client.update_user_profile(
+                DomainId=domain_id,
+                UserProfileName=user_profile_name,
+                UserSettings={
+                    'CustomFileSystemConfigs': [
+                        {
+                            'EFSFileSystemConfig': {
+                                'FileSystemId': file_system,
+                                'FileSystemPath': f'/{user_profile_name}'
+                            }
+                        }
+                    ]
+                }
+            )
+            
+            logger.info(f"Successfully processed user profile: {user_profile_name}")
+            
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'message': f'Successfully created EFS directory for {user_profile_name}',
+                    'domain_id': domain_id,
+                    'file_system': file_system,
+                    'user_profile': user_profile_name,
+                    'efs_directory': f'/{user_profile_name}'
+                })
+            }
+            
+        except Exception as user_error:
+            logger.error(f"Error processing user {user_profile_name}: {str(user_error)}")
+            return {
+                'statusCode': 500,
+                'body': json.dumps({
+                    'error': f'Failed to process user profile: {str(user_error)}',
+                    'user_profile': user_profile_name,
+                    'domain_id': domain_id
+                })
+            }
         
     except Exception as e:
         logger.error(f"Error in lambda_handler: {str(e)}")
