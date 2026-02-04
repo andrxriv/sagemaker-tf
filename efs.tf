@@ -129,7 +129,7 @@ resource "aws_efs_access_point" "shared_repo_ap" {
     creation_info {
       owner_uid   = 200001
       owner_gid   = 1001
-      permissions = "770"
+      permissions = "777"
     }
   }
 

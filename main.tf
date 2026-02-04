@@ -130,15 +130,6 @@ output "deployment_info" {
   }
 }
 
-output "eventbridge_info" {
-  description = "EventBridge rule and Lambda function information"
-  value = {
-    eventbridge_rule_name = aws_cloudwatch_event_rule.create_user_profile_rule.name
-    eventbridge_rule_arn  = aws_cloudwatch_event_rule.create_user_profile_rule.arn
-    lambda_function_name  = aws_lambda_function.create_user_profile_handler.function_name
-    lambda_function_arn   = aws_lambda_function.create_user_profile_handler.arn
-  }
-}
 
 # ==============================================================================
 # Deployment Instructions
